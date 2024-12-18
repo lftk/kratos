@@ -3,6 +3,7 @@ package consul
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -181,6 +182,10 @@ func (r *Registry) ListServices() (allServices map[string][]*registry.ServiceIns
 
 // Watch resolve service by name
 func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, error) {
+	id := rand.Int()
+
+	fmt.Println("watch-1", name, id, time.Now())
+
 	r.lock.Lock()
 	set, ok := r.registry[name]
 	if !ok {
@@ -193,24 +198,45 @@ func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, er
 	}
 	r.lock.Unlock()
 
+	fmt.Println("watch-2", name, id, time.Now())
+
 	// init watcher
 	w := &watcher{
 		event: make(chan struct{}, 1),
 	}
 	w.ctx, w.cancel = context.WithCancel(ctx)
 	w.set = set
+
+	fmt.Println("watch-3", name, id, time.Now())
+
 	set.lock.Lock()
 	set.watcher[w] = struct{}{}
 	set.lock.Unlock()
+
+	fmt.Println("watch-4", name, id, time.Now())
+
 	ss, _ := set.services.Load().([]*registry.ServiceInstance)
 	if len(ss) > 0 {
+		fmt.Println("watch-5", name, id, time.Now())
+
 		// If the service has a value, it needs to be pushed to the watcher,
 		// otherwise the initial data may be blocked forever during the watch.
 		w.event <- struct{}{}
+
+		fmt.Println("watch-6", name, id, time.Now())
 	}
+
+	fmt.Println("watch-7", name, id, time.Now())
+
 	if err := r.resolve(ctx, set); err != nil {
+
+		fmt.Println("watch-8", name, id, time.Now())
+
 		return nil, err
 	}
+
+	fmt.Println("watch-9", name, id, time.Now())
+
 	return w, nil
 }
 
