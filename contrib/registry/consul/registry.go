@@ -230,7 +230,7 @@ func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, er
 
 	if err := r.resolve(ctx, set); err != nil {
 
-		fmt.Println("watch-8", name, id, time.Now())
+		fmt.Println("watch-8", name, id, time.Now(), err)
 
 		return nil, err
 	}
@@ -244,10 +244,16 @@ func (r *Registry) resolve(ctx context.Context, ss *serviceSet) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	fmt.Println("resolve-1", ss.serviceName, time.Now())
+
 	services, idx, err := r.cli.Service(timeoutCtx, ss.serviceName, 0, true)
 	if err != nil {
+		fmt.Println("resolve-2", ss.serviceName, time.Now(), err)
 		return err
 	}
+
+	fmt.Println("resolve-3", ss.serviceName, time.Now(), len(services))
+
 	if len(services) > 0 {
 		ss.broadcast(services)
 	}
