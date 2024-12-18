@@ -135,8 +135,8 @@ func (r *Registry) Deregister(ctx context.Context, svc *registry.ServiceInstance
 // GetService return service by name
 func (r *Registry) GetService(ctx context.Context, name string) ([]*registry.ServiceInstance, error) {
 	r.lock.RLock()
-	defer r.lock.RUnlock()
 	set := r.registry[name]
+	r.lock.RUnlock()
 
 	getRemote := func() []*registry.ServiceInstance {
 		services, _, err := r.cli.Service(ctx, name, 0, true)
