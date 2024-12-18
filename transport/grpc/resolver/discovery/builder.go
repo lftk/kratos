@@ -23,7 +23,9 @@ type Option func(o *builder)
 // WithTimeout with timeout option.
 func WithTimeout(timeout time.Duration) Option {
 	return func(b *builder) {
-		b.timeout = timeout
+		if timeout > 0 {
+			b.timeout = timeout
+		}
 	}
 }
 
