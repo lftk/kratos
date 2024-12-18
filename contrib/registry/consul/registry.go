@@ -182,7 +182,6 @@ func (r *Registry) ListServices() (allServices map[string][]*registry.ServiceIns
 // Watch resolve service by name
 func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, error) {
 	r.lock.Lock()
-	defer r.lock.Unlock()
 	set, ok := r.registry[name]
 	if !ok {
 		set = &serviceSet{
@@ -192,6 +191,7 @@ func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, er
 		}
 		r.registry[name] = set
 	}
+	r.lock.Unlock()
 
 	// init watcher
 	w := &watcher{
