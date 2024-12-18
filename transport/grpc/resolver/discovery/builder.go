@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -84,6 +85,8 @@ func (b *builder) Build(target resolver.Target, cc resolver.ClientConn, _ resolv
 		w   registry.Watcher
 	}{}
 
+	fmt.Println("build-1", time.Now(), b.timeout)
+
 	done := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -93,11 +96,15 @@ func (b *builder) Build(target resolver.Target, cc resolver.ClientConn, _ resolv
 		close(done)
 	}()
 
+	fmt.Println("build-2", time.Now())
+
 	var err error
 	select {
 	case <-done:
+		fmt.Println("build-3", time.Now(), watchRes.err)
 		err = watchRes.err
 	case <-time.After(b.timeout):
+		fmt.Println("build-4", time.Now())
 		err = ErrWatcherCreateTimeout
 	}
 	if err != nil {
