@@ -244,7 +244,7 @@ func (r *Registry) resolve(ctx context.Context, ss *serviceSet) error {
 	timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
-	fmt.Println("resolve-1", ss.serviceName, time.Now())
+	fmt.Println("resolve-1", ss.serviceName, time.Now(), r.timeout)
 
 	services, idx, err := r.cli.Service(timeoutCtx, ss.serviceName, 0, true)
 	if err != nil {
