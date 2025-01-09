@@ -2,7 +2,6 @@ package consul
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,14 +33,26 @@ func WithTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithDatacenter with registry datacenter option
-func WithDatacenter(dc Datacenter) Option {
+// WithDatacenter sets the datacenter(s) for the registry.
+// An empty string represents the local datacenter, and "*" represents all datacenters.
+// This option allows the registry to operate within specific datacenters or across all datacenters.
+func WithDatacenter(dcs ...string) Option {
 	return func(o *Registry) {
-		o.cli.dc = dc
+		o.cli.dcs = dcs
 	}
 }
 
-// WithHeartbeat enable or disable heartbeat
+// WithPeer sets the peer(s) for the registry.
+// If certain datacenters are on peer nodes, peer information must be provided.
+// An empty string indicates no peer nodes are used, and "*" represents all peer nodes.
+// Specifying a specific peer, if known, can improve efficiency by reducing unnecessary queries.
+func WithPeer(peers ...string) Option {
+	return func(o *Registry) {
+		o.cli.peers = peers
+	}
+}
+
+// WithHeartbeat enable or disable heartbeat.
 func WithHeartbeat(enable bool) Option {
 	return func(o *Registry) {
 		if o.cli != nil {
@@ -77,7 +88,7 @@ func WithDeregisterCriticalServiceAfter(interval int) Option {
 	}
 }
 
-// WithServiceCheck with service checks
+// WithServiceCheck with service checks.
 func WithServiceCheck(checks ...*api.AgentServiceCheck) Option {
 	return func(o *Registry) {
 		if o.cli != nil {
@@ -107,7 +118,8 @@ func New(apiClient *api.Client, opts ...Option) *Registry {
 		enableHealthCheck: true,
 		timeout:           10 * time.Second,
 		cli: &Client{
-			dc:                             SingleDatacenter,
+			dcs:                            nil,
+			peers:                          nil,
 			cli:                            apiClient,
 			resolver:                       defaultResolver,
 			healthcheckInterval:            10,
@@ -132,51 +144,14 @@ func (r *Registry) Deregister(ctx context.Context, svc *registry.ServiceInstance
 	return r.cli.Deregister(ctx, svc.ID)
 }
 
-// GetService return service by name
+// GetService returns service by name
 func (r *Registry) GetService(ctx context.Context, name string) ([]*registry.ServiceInstance, error) {
-	r.lock.RLock()
-	set := r.registry[name]
-	r.lock.RUnlock()
-
-	getRemote := func() []*registry.ServiceInstance {
-		services, _, err := r.cli.Service(ctx, name, 0, true)
-		if err == nil && len(services) > 0 {
-			return services
-		}
-		return nil
-	}
-
-	if set == nil {
-		if s := getRemote(); len(s) > 0 {
-			return s, nil
-		}
-		return nil, fmt.Errorf("service %s not resolved in registry", name)
-	}
-	ss, _ := set.services.Load().([]*registry.ServiceInstance)
-	if ss == nil {
-		if s := getRemote(); len(s) > 0 {
-			return s, nil
-		}
-		return nil, fmt.Errorf("service %s not found in registry", name)
-	}
-	return ss, nil
+	return r.cli.GetService(ctx, name, true)
 }
 
-// ListServices return service list.
-func (r *Registry) ListServices() (allServices map[string][]*registry.ServiceInstance, err error) {
-	r.lock.RLock()
-	defer r.lock.RUnlock()
-	allServices = make(map[string][]*registry.ServiceInstance)
-	for name, set := range r.registry {
-		var services []*registry.ServiceInstance
-		ss, _ := set.services.Load().([]*registry.ServiceInstance)
-		if ss == nil {
-			continue
-		}
-		services = append(services, ss...)
-		allServices[name] = services
-	}
-	return
+// ListServices returns the service list.
+func (r *Registry) ListServices() (map[string][]*registry.ServiceInstance, error) {
+	return r.cli.ListServices(context.Background())
 }
 
 // Watch resolve service by name
@@ -223,57 +198,26 @@ func (r *Registry) Watch(ctx context.Context, name string) (registry.Watcher, er
 	}
 
 	if !ok {
-		if err := r.resolve(ctx, set); err != nil {
-			return nil, err
-		}
+		go func() {
+			// Once the Go version is upgraded to 1.23, the code can be refactored as follows:
+			//
+			// for services := range r.cli.WatchService(set.ctx, name, true) {
+			// 	if err := set.ctx.Err(); err != nil {
+			// 		break
+			// 	}
+			// 	set.broadcast(services)
+			// }
+			seq := r.cli.WatchService(set.ctx, name, true)
+			seq(func(services []*registry.ServiceInstance) bool {
+				if err := set.ctx.Err(); err != nil {
+					return false
+				}
+				set.broadcast(services)
+				return true
+			})
+		}()
 	}
 	return w, nil
-}
-
-func (r *Registry) resolve(ctx context.Context, ss *serviceSet) error {
-	listServices := r.cli.Service
-	if r.timeout > 0 {
-		listServices = func(ctx context.Context, service string, index uint64, passingOnly bool) ([]*registry.ServiceInstance, uint64, error) {
-			timeoutCtx, cancel := context.WithTimeout(ctx, r.timeout)
-			defer cancel()
-
-			return r.cli.Service(timeoutCtx, service, index, passingOnly)
-		}
-	}
-
-	services, idx, err := listServices(ctx, ss.serviceName, 0, true)
-	if err != nil {
-		return err
-	}
-	if len(services) > 0 {
-		ss.broadcast(services)
-	}
-
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				tmpService, tmpIdx, err := listServices(ss.ctx, ss.serviceName, idx, true)
-				if err != nil {
-					if err := sleepCtx(ss.ctx, time.Second); err != nil {
-						return
-					}
-					continue
-				}
-				if len(tmpService) != 0 && tmpIdx != idx {
-					services = tmpService
-					ss.broadcast(services)
-				}
-				idx = tmpIdx
-			case <-ss.ctx.Done():
-				return
-			}
-		}
-	}()
-
-	return nil
 }
 
 func (r *Registry) tryDelete(ss *serviceSet) bool {

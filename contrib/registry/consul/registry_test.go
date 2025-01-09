@@ -177,7 +177,7 @@ func TestRegistry_GetService(t *testing.T) {
 	opts := []Option{
 		WithHeartbeat(true),
 		WithHealthCheck(true),
-		WithHealthCheckInterval(5),
+		WithHealthCheckInterval(1),
 	}
 	r := New(cli, opts...)
 
@@ -254,7 +254,7 @@ func TestRegistry_GetService(t *testing.T) {
 				serviceName: "server-x",
 			},
 			want:    nil,
-			wantErr: true,
+			wantErr: false,
 			preFunc: func(t *testing.T) {
 				if err := r.Register(context.Background(), instance2); err != nil {
 					t.Error(err)
@@ -350,11 +350,12 @@ func TestRegistry_Watch(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(context.Background())
 
 	tests := []struct {
-		name    string
-		args    args
-		want    []*registry.ServiceInstance
-		wantErr bool
-		preFunc func(t *testing.T)
+		name            string
+		args            args
+		want            []*registry.ServiceInstance
+		wantErr         bool
+		preFunc         func(t *testing.T)
+		beforeWatchFunc func(t *testing.T)
 	}{
 		{
 			name: "normal",
@@ -391,12 +392,16 @@ func TestRegistry_Watch(t *testing.T) {
 				opts: []Option{
 					WithHeartbeat(true),
 					WithHealthCheck(true),
-					WithHealthCheckInterval(5),
+					WithHealthCheckInterval(1),
 				},
 			},
 			want:    []*registry.ServiceInstance{instance3},
 			wantErr: false,
 			preFunc: func(*testing.T) {},
+			beforeWatchFunc: func(_ *testing.T) {
+				// Wait for health check
+				time.Sleep(time.Second)
+			},
 		},
 	}
 
@@ -419,6 +424,11 @@ func TestRegistry_Watch(t *testing.T) {
 					t.Error(err)
 				}
 			}()
+
+			if tt.beforeWatchFunc != nil {
+				tt.beforeWatchFunc(t)
+			}
+
 			watch, err := r.Watch(tt.args.ctx, tt.args.instance.Name)
 			if err != nil {
 				t.Error(err)
@@ -553,6 +563,8 @@ func TestRegistry_IdleAndWatch(t *testing.T) {
 				}
 			}()
 
+			time.Sleep(time.Second)
+
 			var wg2 sync.WaitGroup
 			for _, watch := range watchs {
 				wg2.Add(1)
@@ -642,7 +654,7 @@ func TestRegistry_IdleAndWatch2(t *testing.T) {
 					// first
 					service, err2 := watch.Next()
 					if (err2 != nil) != tt.wantErr {
-						t.Errorf("GetService() error = %v, wantErr %v", err, tt.wantErr)
+						t.Errorf("GetService() error = %v, wantErr %v", err2, tt.wantErr)
 						t.Errorf("GetService() got = %v", service)
 						return
 					}
@@ -652,14 +664,14 @@ func TestRegistry_IdleAndWatch2(t *testing.T) {
 					case <-stopCtx.Done():
 						err1 = watch.Stop()
 						if err1 != nil {
-							t.Errorf("watch stop err:%v", err)
+							t.Errorf("watch stop err:%v", err1)
 						}
 						return
 					case <-time.After(time.Minute):
 						stopCancel()
 						err1 = watch.Stop()
 						if err1 != nil {
-							t.Errorf("watch stop err:%v", err)
+							t.Errorf("watch stop err:%v", err1)
 						}
 						return
 					}
@@ -759,7 +771,7 @@ func TestRegistry_ExitOldResolverAndReWatch(t *testing.T) {
 				t.Errorf("GetService() got = %v", service)
 			}
 
-			time.Sleep(time.Second * 3)
+			// time.Sleep(time.Second * 3)
 			// The simulation entered idle mode first, but the old resolver was not closed yet, and new requests triggered a new Watch.
 			watchCtx := context.Background()
 			// old resolver cancel
@@ -780,12 +792,12 @@ func TestRegistry_ExitOldResolverAndReWatch(t *testing.T) {
 				t.Errorf("GetService() got = %v", service)
 			}
 			// change register info
-			time.Sleep(time.Second * 1)
+			// time.Sleep(time.Second * 1)
 			err = r.Deregister(tt.args.ctx, tt.args.initialInstance)
 			if err != nil {
 				t.Error(err)
 			}
-			time.Sleep(time.Second * 5)
+			// time.Sleep(time.Second * 5)
 			err = r.Register(tt.args.ctx, tt.args.instance)
 			if err != nil {
 				t.Error(err)
@@ -848,6 +860,11 @@ func TestRegistry_ShareServiceSet(t *testing.T) {
 			return
 		}
 
+		if index != 0 {
+			// Simulate the blocking situation when WaitIndex is not 0
+			_ = sleepCtx(r.Context(), time.Second)
+		}
+
 		lastIndex = index + 1
 		w.Header().Set("X-Consul-Index", strconv.FormatUint(lastIndex, 10))
 
@@ -891,7 +908,7 @@ func TestRegistry_ShareServiceSet(t *testing.T) {
 		prev = w
 	}
 
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second)
 
 	if prev != nil {
 		if err = prev.Stop(); err != nil {
@@ -998,6 +1015,9 @@ func TestRegistry_MultiWatch(t *testing.T) {
 			t.Error(err)
 		}
 	}()
+
+	// wait for watch2 to receive the new instance
+	time.Sleep(time.Second)
 
 	// second watcher should get the new instance
 	got, err := watch2.Next()
